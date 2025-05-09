@@ -1,0 +1,29 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model GameRoom {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  status    String  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  players   Player[]
+  winner    Player?  @relation("WinnerRelation", fields: [winnerId], references: [id])
+  winnerId  String?
+}
+
+model Player {
+  id         String    @id @default(uuid())
+  name       String
+  color      String
+  gameRoom   GameRoom  @relation(fields: [gameRoomId], references: [id])
+  gameRoomId String
+  wonGames   GameRoom[] @relation("WinnerRelation")
+}
