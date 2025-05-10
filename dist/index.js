@@ -112,6 +112,77 @@ wss.on('connection', (ws) => {
                     }));
                     break;
                 }
+                case 'GET_ROOM_STATE': {
+                    // Rename to avoid shadowing
+                    const { roomCode, playerId: incomingPlayerId } = data;
+                    // Find room by code
+                    const roomEntry = Array.from(activeGames.entries())
+                        .find(([_, room]) => room.code === roomCode);
+                    if (!roomEntry) {
+                        // Try to find in database if not in memory
+                        const dbRoom = yield prisma.gameRoom.findFirst({
+                            where: { code: roomCode },
+                            include: { players: true }
+                        });
+                        if (!dbRoom) {
+                            ws.send(JSON.stringify({
+                                type: 'ERROR',
+                                message: 'Room not found'
+                            }));
+                            return;
+                        }
+                        // Restore room from database
+                        const restoredRoom = {
+                            id: dbRoom.id,
+                            code: dbRoom.code,
+                            players: dbRoom.players.map(p => ({
+                                id: p.id,
+                                name: p.name,
+                                position: 0,
+                                color: p.color
+                            })),
+                            currentTurn: 0,
+                            gameState: dbRoom.status === 'inactive' ? 'waiting' : dbRoom.status,
+                            snakesAndLadders: createSnakesAndLadders(),
+                            boardSize: 100,
+                            winner: dbRoom.winnerId
+                        };
+                        // Update player connection if valid incomingPlayerId exists in room
+                        if (incomingPlayerId && restoredRoom.players.some(p => p.id === incomingPlayerId)) {
+                            playerId = incomingPlayerId; // Set connection's playerId
+                            currentRoomId = dbRoom.id;
+                            playerConnections.set(incomingPlayerId, ws);
+                        }
+                        // Send room state
+                        ws.send(JSON.stringify({
+                            type: 'ROOM_STATE',
+                            room: restoredRoom
+                        }));
+                        activeGames.set(dbRoom.id, restoredRoom);
+                        if (dbRoom.status === 'inactive') {
+                            yield prisma.gameRoom.update({
+                                where: { id: dbRoom.id },
+                                data: { status: 'waiting' }
+                            });
+                        }
+                    }
+                    else {
+                        // Room is already in memory
+                        const [roomId, room] = roomEntry;
+                        // Update player connection if valid incomingPlayerId exists in room
+                        if (incomingPlayerId && room.players.some(p => p.id === incomingPlayerId)) {
+                            playerId = incomingPlayerId; // Set connection's playerId
+                            currentRoomId = roomId;
+                            playerConnections.set(incomingPlayerId, ws);
+                        }
+                        // Send room state
+                        ws.send(JSON.stringify({
+                            type: 'ROOM_STATE',
+                            room
+                        }));
+                    }
+                    break;
+                }
                 case 'JOIN_ROOM': {
                     const { roomCode, playerName, color } = data;
                     const roomEntry = Array.from(activeGames.entries())
@@ -238,12 +309,31 @@ wss.on('connection', (ws) => {
                     break;
                 }
                 case 'ROLL_DICE': {
-                    if (!currentRoomId || !playerId)
+                    if (!currentRoomId || !playerId) {
+                        ws.send(JSON.stringify({
+                            type: 'ERROR',
+                            message: 'Invalid session state'
+                        }));
                         return;
+                    }
                     const room = activeGames.get(currentRoomId);
-                    if (!room || room.gameState !== 'playing')
+                    if (!room || room.gameState !== 'playing') {
+                        ws.send(JSON.stringify({
+                            type: 'ERROR',
+                            message: 'Game not in playing state'
+                        }));
                         return;
+                    }
+                    // Find player index by ID
                     const playerIndex = room.players.findIndex(p => p.id === playerId);
+                    // Check if it's this player's turn
+                    if (playerIndex === -1) {
+                        ws.send(JSON.stringify({
+                            type: 'ERROR',
+                            message: 'Player not found in game'
+                        }));
+                        return;
+                    }
                     if (playerIndex !== room.currentTurn) {
                         ws.send(JSON.stringify({
                             type: 'ERROR',
@@ -251,16 +341,21 @@ wss.on('connection', (ws) => {
                         }));
                         return;
                     }
+                    // Roll the dice
                     const diceValue = Math.floor(Math.random() * 6) + 1;
                     const player = room.players[playerIndex];
+                    // Calculate new position
                     let newPosition = player.position + diceValue;
+                    // Check for snakes and ladders
                     if (room.snakesAndLadders[newPosition]) {
                         newPosition = room.snakesAndLadders[newPosition];
                     }
+                    // Check for win condition
                     if (newPosition >= room.boardSize) {
                         newPosition = room.boardSize;
                         room.gameState = 'finished';
                         room.winner = player.id;
+                        // Update database
                         yield prisma.gameRoom.update({
                             where: { id: currentRoomId },
                             data: {
@@ -269,8 +364,11 @@ wss.on('connection', (ws) => {
                             }
                         });
                     }
+                    // Update player position
                     player.position = newPosition;
+                    // Move to next player's turn
                     room.currentTurn = (room.currentTurn + 1) % room.players.length;
+                    // Broadcast the move to all players
                     broadcastToRoom(currentRoomId, {
                         type: 'PLAYER_MOVED',
                         playerId: player.id,
