@@ -469,7 +469,7 @@ process.on('SIGINT', async () => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-  console.log(`WebSocket server running on port ${PORT}`);
+const PORT = process.env.PORT || 10000;
+httpServer.listen(10000, '0.0.0.0',() => {
+  console.log(`WebSocket server running on  0.0.0.0:10000`);
 });
