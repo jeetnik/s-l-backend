@@ -16,10 +16,8 @@ const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const httpServer = (0, http_1.createServer)();
 const wss = new ws_1.WebSocketServer({ server: httpServer });
-// State management
 const activeGames = new Map();
 const playerConnections = new Map();
-// Helper functions
 function generateRoomCode() {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
@@ -47,7 +45,6 @@ function createSnakesAndLadders() {
         98: 78,
     };
 }
-// Send message to all players in a room
 function broadcastToRoom(roomId, message) {
     try {
         const room = activeGames.get(roomId);
@@ -64,7 +61,6 @@ function broadcastToRoom(roomId, message) {
         console.error('Error broadcasting to room:', error);
     }
 }
-// Send error message to client
 function sendError(ws, message) {
     try {
         ws.send(JSON.stringify({
@@ -76,7 +72,6 @@ function sendError(ws, message) {
         console.error('Error sending error message:', error);
     }
 }
-// WebSocket connection handler
 wss.on('connection', (ws) => {
     let playerId = null;
     let currentRoomId = null;
@@ -111,7 +106,6 @@ wss.on('connection', (ws) => {
                         activeGames.set(roomId, newRoom);
                         playerConnections.set(playerId, ws);
                         currentRoomId = roomId;
-                        // Create room in database
                         yield prisma.gameRoom.create({
                             data: {
                                 id: roomId,
@@ -149,11 +143,9 @@ wss.on('connection', (ws) => {
                         if (!roomCode) {
                             return sendError(ws, 'Room code is required');
                         }
-                        // Check if room exists in memory
                         const roomEntry = Array.from(activeGames.entries())
                             .find(([_, room]) => room.code === roomCode);
                         if (!roomEntry) {
-                            // Try to find room in database
                             const dbRoom = yield prisma.gameRoom.findFirst({
                                 where: { code: roomCode },
                                 include: { players: true }
@@ -161,7 +153,6 @@ wss.on('connection', (ws) => {
                             if (!dbRoom) {
                                 return sendError(ws, 'Room not found');
                             }
-                            // Restore room from database
                             const restoredRoom = {
                                 id: dbRoom.id,
                                 code: dbRoom.code,
@@ -169,7 +160,7 @@ wss.on('connection', (ws) => {
                                     id: p.id,
                                     name: p.name,
                                     position: 0,
-                                    color: p.color || '#000000' // Provide default color if missing
+                                    color: p.color || '#000000'
                                 })),
                                 currentTurn: 0,
                                 gameState: dbRoom.status === 'inactive' ? 'waiting' : dbRoom.status,
@@ -195,7 +186,6 @@ wss.on('connection', (ws) => {
                             }
                         }
                         else {
-                            // Room exists in memory
                             const [roomId, room] = roomEntry;
                             if (incomingPlayerId && room.players.some(p => p.id === incomingPlayerId)) {
                                 playerId = incomingPlayerId;
@@ -223,7 +213,6 @@ wss.on('connection', (ws) => {
                         const roomEntry = Array.from(activeGames.entries())
                             .find(([_, room]) => room.code === roomCode);
                         if (!roomEntry) {
-                            // Try to find room in database
                             const dbRoom = yield prisma.gameRoom.findFirst({
                                 where: { code: roomCode, status: 'waiting' },
                                 include: { players: true }
@@ -231,7 +220,6 @@ wss.on('connection', (ws) => {
                             if (!dbRoom) {
                                 return sendError(ws, 'Room not found or game already started');
                             }
-                            // Restore room from database
                             const restoredRoom = {
                                 id: dbRoom.id,
                                 code: dbRoom.code,
@@ -258,7 +246,6 @@ wss.on('connection', (ws) => {
                             restoredRoom.players.push(player);
                             playerConnections.set(playerId, ws);
                             currentRoomId = dbRoom.id;
-                            // Add player to database
                             yield prisma.player.create({
                                 data: {
                                     id: playerId,
@@ -279,7 +266,6 @@ wss.on('connection', (ws) => {
                             }));
                         }
                         else {
-                            // Room exists in memory
                             const [roomId, room] = roomEntry;
                             if (room.gameState !== 'waiting') {
                                 return sendError(ws, 'Game already started');
@@ -294,7 +280,6 @@ wss.on('connection', (ws) => {
                             room.players.push(player);
                             playerConnections.set(playerId, ws);
                             currentRoomId = roomId;
-                            // Add player to database
                             yield prisma.player.create({
                                 data: {
                                     id: playerId,
@@ -334,7 +319,6 @@ wss.on('connection', (ws) => {
                             return sendError(ws, 'Need at least 2 players to start');
                         }
                         room.gameState = 'playing';
-                        // Update room status in database
                         yield prisma.gameRoom.update({
                             where: { id: currentRoomId },
                             data: { status: 'playing' }
@@ -366,20 +350,16 @@ wss.on('connection', (ws) => {
                         if (playerIndex !== room.currentTurn) {
                             return sendError(ws, 'Not your turn');
                         }
-                        // Roll dice and move player
                         const diceValue = Math.floor(Math.random() * 6) + 1;
                         const player = room.players[playerIndex];
                         let newPosition = player.position + diceValue;
-                        // Check for snakes and ladders
                         if (room.snakesAndLadders[newPosition]) {
                             newPosition = room.snakesAndLadders[newPosition];
                         }
-                        // Check for win condition
                         if (newPosition >= room.boardSize) {
                             newPosition = room.boardSize;
                             room.gameState = 'finished';
                             room.winner = player.id;
-                            // Update game status in database
                             yield prisma.gameRoom.update({
                                 where: { id: currentRoomId },
                                 data: {
@@ -415,12 +395,10 @@ wss.on('connection', (ws) => {
                         if (!room) {
                             return sendError(ws, 'Room not found');
                         }
-                        // Reset game state
                         room.players.forEach(p => p.position = 0);
                         room.currentTurn = 0;
                         room.gameState = 'playing';
                         room.winner = null;
-                        // Update game status in database
                         yield prisma.gameRoom.update({
                             where: { id: currentRoomId },
                             data: {
@@ -456,26 +434,21 @@ wss.on('connection', (ws) => {
                 if (room) {
                     const playerIndex = room.players.findIndex(p => p.id === playerId);
                     if (playerIndex !== -1) {
-                        // Remove player from room
                         room.players.splice(playerIndex, 1);
                         if (room.players.length === 0) {
-                            // Remove room if empty
                             activeGames.delete(currentRoomId);
-                            // Mark room as inactive in database
                             yield prisma.gameRoom.update({
                                 where: { id: currentRoomId },
                                 data: { status: 'inactive' }
                             });
                         }
                         else {
-                            // Adjust current turn if necessary
                             if (playerIndex < room.currentTurn) {
                                 room.currentTurn--;
                             }
                             else if (playerIndex === room.currentTurn) {
                                 room.currentTurn %= room.players.length;
                             }
-                            // Notify other players
                             broadcastToRoom(currentRoomId, {
                                 type: 'PLAYER_LEFT',
                                 playerId,
@@ -484,7 +457,6 @@ wss.on('connection', (ws) => {
                         }
                     }
                 }
-                // Remove player connection
                 playerConnections.delete(playerId);
             }
         }
@@ -493,7 +465,6 @@ wss.on('connection', (ws) => {
         }
     }));
 });
-// Handle server shutdown gracefully
 process.on('SIGINT', () => __awaiter(void 0, void 0, void 0, function* () {
     try {
         console.log('Shutting down server...');
@@ -505,8 +476,7 @@ process.on('SIGINT', () => __awaiter(void 0, void 0, void 0, function* () {
         process.exit(1);
     }
 }));
-// Start server
-const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-    console.log(`WebSocket server running on port ${PORT}`);
+const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
+httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`WebSocket server running on 0.0.0.0:${PORT}`);
 });
