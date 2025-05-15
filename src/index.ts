@@ -475,7 +475,7 @@ process.on('SIGINT', async () => {
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
 
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`HTTP and WebSocket server running on 0.0.0.0:${PORT}`);
 });
 
