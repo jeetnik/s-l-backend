@@ -4,7 +4,11 @@ import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const httpServer = createServer();
+const httpServer = createServer((req, res) => {
+
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Snakes and Ladders Game Server Running');
+});
 const wss = new WebSocketServer({ server: httpServer });
 interface Player {
   id: string;
